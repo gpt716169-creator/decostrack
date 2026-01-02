@@ -40,7 +40,7 @@
 
     <!-- Основной код приложения -->
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useCallback } = React;
 
         // --- ИКОНКИ (SVG) ---
         // Чтобы не грузить библиотеки, я вставил их кодом.
@@ -137,34 +137,58 @@
             }
           }, [result, ymapsReady]);
 
-          const handleTrack = async (e) => {
-            e.preventDefault();
-            if (!trackingNumber) return;
+          // --- ФУНКЦИЯ ПОИСКА (Вынесена отдельно) ---
+          const performSearch = useCallback(async (trackNum) => {
+            if (!trackNum) return;
 
             setLoading(true);
             setError('');
             setResult(null);
 
-            // TODO: Раскомментировать для n8n
-            // try {
-            //    const response = await fetch('https://твоя-ссылка-на-n8n-webhook', { 
-            //      method: 'POST', 
-            //      body: JSON.stringify({ track: trackingNumber }) 
-            //    });
-            //    const data = await response.json();
-            //    setResult(data);
-            // } catch (e) { setError('Ошибка сети'); }
+            // TODO: Раскомментировать для реального API (n8n)
+            /*
+            try {
+               const response = await fetch('https://твоя-ссылка-на-n8n-webhook', { 
+                 method: 'POST', 
+                 body: JSON.stringify({ track: trackNum }) 
+               });
+               if (!response.ok) throw new Error('Ошибка сети');
+               const data = await response.json();
+               setResult(data);
+            } catch (e) { 
+                setError('Ошибка при поиске. Попробуйте позже.'); 
+            }
+            */
 
-            // MOCK для демо
+            // MOCK данные для демо
             setTimeout(() => {
               setLoading(false);
-              if (trackingNumber.length > 3) {
+              // Если номер длиннее 3 символов - показываем результат
+              if (trackNum.length > 3) {
                 setResult(MOCK_DATA);
               } else {
                 setError('Трек-номер не найден. Пожалуйста, проверьте правильность ввода.');
               }
-            }, 1500);
+            }, 1000); // Чуть уменьшил задержку для UX
+          }, []);
+
+          // Обработчик кнопки "Найти"
+          const handleTrack = (e) => {
+            e.preventDefault();
+            performSearch(trackingNumber);
           };
+
+          // --- АВТОМАТИЧЕСКИЙ ПОИСК ИЗ URL ---
+          useEffect(() => {
+            // Читаем параметры из адресной строки (?track=...)
+            const params = new URLSearchParams(window.location.search);
+            const trackParam = params.get('track');
+            
+            if (trackParam) {
+              setTrackingNumber(trackParam); // Заполняем поле ввода
+              performSearch(trackParam);     // Сразу запускаем поиск
+            }
+          }, [performSearch]);
 
           return (
             <div className="min-h-screen flex flex-col">

@@ -1,426 +1,434 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  Search, 
-  Package, 
-  Truck, 
-  MapPin, 
-  CheckCircle, 
-  Clock, 
-  Globe, 
-  Navigation,
-  Info,
-  Phone,
-  Mail
-} from 'lucide-react';
-
-// Функция для очистки текста от HTML тегов (Shop-Script любит присылать <i>...</i>)
-const cleanText = (html) => {
-  if (!html) return '';
-  // Если это не строка, возвращаем как есть
-  if (typeof html !== 'string') return html;
-  // Создаем временный элемент для получения чистого текста
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  return doc.body.textContent || "";
-};
-
-export default function App() {
-  const [trackingNumber, setTrackingNumber] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
-  const [isMapApiLoaded, setIsMapApiLoaded] = useState(false);
-  const mapInstanceRef = useRef(null);
-
-  // 1. Загрузка API Яндекс.Карт
-  useEffect(() => {
-    const scriptId = 'yandex-map-script';
-    if (!document.getElementById(scriptId)) {
-      const script = document.createElement('script');
-      script.id = scriptId;
-      script.src = "https://api-maps.yandex.ru/2.1/?apikey=27ab6385-8ae2-4a7a-81bb-802ed03579b0&lang=ru_RU";
-      script.async = true;
-      script.onload = () => setIsMapApiLoaded(true);
-      document.body.appendChild(script);
-    } else {
-      if (window.ymaps) {
-        setIsMapApiLoaded(true);
-      } else {
-         const scriptEl = document.getElementById(scriptId);
-         if(scriptEl) scriptEl.addEventListener('load', () => setIsMapApiLoaded(true));
-      }
-    }
-  }, []);
-
-  // 2. Отрисовка карты (Место назначения)
-  useEffect(() => {
-    if (result && isMapApiLoaded && window.ymaps) {
-      window.ymaps.ready(() => {
-        // БЕРЕМ АДРЕС ДОСТАВКИ
-        // Если n8n вернет точный адрес с улицей, карта покажет его
-        const locationToGeocode = result.destination || "Россия";
-
-        const mapContainer = document.getElementById('yandex-map');
-        if (mapContainer) mapContainer.innerHTML = '';
-
-        window.ymaps.geocode(locationToGeocode).then((res) => {
-          const firstGeoObject = res.geoObjects.get(0);
-          const coords = firstGeoObject.geometry.getCoordinates();
-          
-          // Определяем зум: если адрес точный (есть улица), зум больше
-          const precision = firstGeoObject.properties.get('metaDataProperty.GeocoderMetaData.precision');
-          const zoomLevel = (precision === 'street' || precision === 'exact') ? 15 : 10;
-
-          const myMap = new window.ymaps.Map("yandex-map", {
-            center: coords,
-            zoom: zoomLevel, 
-            controls: ['zoomControl', 'fullscreenControl']
-          });
-
-          const myPlacemark = new window.ymaps.Placemark(coords, {
-            balloonContentHeader: "Адрес доставки",
-            balloonContentBody: locationToGeocode,
-            balloonContentFooter: "DecosThai",
-            hintContent: "Место получения"
-          }, {
-            preset: 'islands#darkGreenIcon',
-          });
-
-          myMap.geoObjects.add(myPlacemark);
-          mapInstanceRef.current = myMap;
-        }).catch(err => {
-            console.error("Ошибка геокодирования:", err);
-             // Фолбек (Москва)
-             new window.ymaps.Map("yandex-map", {
-                center: [55.751574, 37.573856],
-                zoom: 5
-            });
-        });
-      });
-    }
-  }, [result, isMapApiLoaded]);
-
-  // 3. Функция поиска (Реальный API)
-  const performSearch = useCallback(async (track) => {
-    if (!track) return;
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DecosThai Tracking</title>
     
-    setLoading(true);
-    setError('');
-    setResult(null);
+    <!-- 1. Tailwind CSS (Отвечает за дизайн) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. React и ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- 3. Babel (Чтобы браузер понимал современный JS/JSX) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    try {
-        const response = await fetch('https://proshein.com/webhook/decos-track', { 
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ track: track.trim() }) 
-        });
+    <!-- 4. Яндекс.Карты (Твой ключ) -->
+    <script src="https://api-maps.yandex.ru/2.1/?apikey=27ab6385-8ae2-4a7a-81bb-802ed03579b0&lang=ru_RU" type="text/javascript"></script>
 
-        if (!response.ok) {
-            throw new Error('Ошибка сервера');
+    <!-- Шрифты -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,700;1,400&family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Noto Sans', sans-serif; }
+        h1, h2, h3, .font-serif { font-family: 'Noto Serif', serif; }
+        /* Анимации */
+        @keyframes fade-in-up {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
+        .animate-fade-in-up { animation: fade-in-up 0.5s ease-out forwards; }
+        .animate-fade-in { animation: fade-in-up 0.3s ease-out forwards; }
+    </style>
+</head>
+<body class="bg-stone-50 text-stone-800">
 
-        const data = await response.json();
+    <div id="root"></div>
 
-        if (data.error) {
-            setError(data.error); // Показываем текст ошибки с бэкенда
-        } else {
-            setResult(data);
-        }
-    } catch (e) {
-        console.error(e);
-        setError('Не удалось загрузить данные. Проверьте интернет или номер заказа.');
-    } finally {
-        setLoading(false);
-    }
-  }, []);
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
 
-  const handleTrackSubmit = (e) => {
-    e.preventDefault();
-    performSearch(trackingNumber);
-  };
+        // --- ИКОНКИ (Замена lucide-react для работы без сборки) ---
+        const Icons = {
+            Search: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
+            Package: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22v-9"/></svg>,
+            Truck: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>,
+            MapPin: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>,
+            CheckCircle: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+            Clock: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+            Globe: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>,
+            Navigation: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>,
+            Info: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>,
+            Phone: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+            Mail: (props) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+        };
 
-  // 4. Авто-запуск поиска из URL (?track=...)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const trackParam = params.get('track');
-    if (trackParam) {
-      setTrackingNumber(trackParam);
-      performSearch(trackParam);
-    }
-  }, [performSearch]);
+        // --- Вспомогательная функция очистки текста ---
+        const cleanText = (html) => {
+          if (!html) return '';
+          if (typeof html !== 'string') return html;
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          return doc.body.textContent || "";
+        };
 
-  return (
-    <div className="min-h-screen bg-stone-50 font-sans text-stone-800 flex flex-col">
-      
-      {/* --- HEADER --- */}
-      <header className="bg-emerald-900 text-white shadow-lg relative overflow-hidden flex-shrink-0">
-        <div className="absolute inset-0 opacity-10 pointer-events-none">
-          <svg width="100%" height="100%">
-            <pattern id="pattern-circles" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
-              <circle cx="20" cy="20" r="18" fill="none" stroke="currentColor" strokeWidth="1"/>
-            </pattern>
-            <rect x="0" y="0" width="100%" height="100%" fill="url(#pattern-circles)" />
-          </svg>
-        </div>
+        // --- Основной Компонент ---
+        function App() {
+          const [trackingNumber, setTrackingNumber] = useState('');
+          const [loading, setLoading] = useState(false);
+          const [result, setResult] = useState(null);
+          const [error, setError] = useState('');
+          const [isMapApiLoaded, setIsMapApiLoaded] = useState(false);
+          const mapInstanceRef = useRef(null);
 
-        <div className="max-w-6xl mx-auto px-4 py-6 flex justify-between items-center relative z-10">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 bg-amber-500 rounded-full flex items-center justify-center text-emerald-900 font-bold text-xl">
-              D
-            </div>
-            <div>
-              <h1 className="text-2xl font-serif font-bold tracking-wide text-amber-400">DecosThai</h1>
-              <p className="text-xs text-emerald-200 uppercase tracking-widest">Premium Thai Goods</p>
-            </div>
-          </div>
-          <nav className="hidden md:flex gap-6 text-sm font-medium text-emerald-100">
-            <a href="https://decosthai.com/ru/" target="_blank" rel="noopener noreferrer" className="hover:text-amber-400 transition">Каталог</a>
-            <a href="https://decosthai.com/ru/o-nas/" target="_blank" rel="noopener noreferrer" className="hover:text-amber-400 transition">О нас</a>
-            <a href="https://t.me/decosthaibot" target="_blank" rel="noopener noreferrer" className="hover:text-amber-400 transition flex items-center gap-1">Помощь (Bot)</a>
-          </nav>
-        </div>
-      </header>
+          // 1. Загрузка API Яндекс.Карт
+          useEffect(() => {
+            const scriptId = 'yandex-map-script';
+            if (!document.getElementById(scriptId)) {
+              const script = document.createElement('script');
+              script.id = scriptId;
+              script.src = "https://api-maps.yandex.ru/2.1/?apikey=27ab6385-8ae2-4a7a-81bb-802ed03579b0&lang=ru_RU";
+              script.async = true;
+              script.onload = () => setIsMapApiLoaded(true);
+              document.body.appendChild(script);
+            } else {
+              if (window.ymaps) {
+                setIsMapApiLoaded(true);
+              } else {
+                 const scriptEl = document.getElementById(scriptId);
+                 if(scriptEl) scriptEl.addEventListener('load', () => setIsMapApiLoaded(true));
+              }
+            }
+          }, []);
 
-      {/* --- HERO SECTION --- */}
-      <div className="relative bg-gradient-to-b from-emerald-900 to-emerald-800 pb-24 pt-12 px-4 rounded-b-[3rem] shadow-xl flex-shrink-0">
-        <div className="max-w-3xl mx-auto text-center relative z-10">
-          <h2 className="text-3xl md:text-5xl font-serif text-white mb-6">
-            Где моя посылка?
-          </h2>
-          <p className="text-emerald-100 mb-8 text-lg">
-            Отслеживайте доставку ваших любимых товаров из Таиланда в реальном времени.
-          </p>
+          // 2. Отрисовка карты
+          useEffect(() => {
+            if (result && isMapApiLoaded && window.ymaps) {
+              window.ymaps.ready(() => {
+                const locationToGeocode = result.destination || "Россия";
+                const mapContainer = document.getElementById('yandex-map');
+                if (mapContainer) mapContainer.innerHTML = '';
 
-          <form onSubmit={handleTrackSubmit} className="relative max-w-xl mx-auto">
-            <div className="relative group">
-              <input 
-                type="text" 
-                placeholder="Введите трек-номер (например, TH123456789RU)" 
-                className="w-full pl-6 pr-36 py-5 rounded-full shadow-2xl bg-white/95 text-lg border-2 border-transparent focus:border-amber-400 focus:outline-none focus:ring-4 focus:ring-amber-400/20 transition-all placeholder:text-stone-400 text-stone-800"
-                value={trackingNumber}
-                onChange={(e) => setTrackingNumber(e.target.value)}
-              />
-              <button 
-                type="submit"
-                disabled={loading}
-                className="absolute right-2 top-2 bottom-2 bg-amber-500 hover:bg-amber-400 text-emerald-900 font-bold px-8 rounded-full transition-all transform hover:scale-105 active:scale-95 disabled:opacity-70 flex items-center gap-2"
-              >
-                {loading ? (
-                  <span className="animate-spin text-xl">⏳</span>
-                ) : (
-                  <>
-                    <Search className="w-5 h-5" />
-                    <span>Найти</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
+                window.ymaps.geocode(locationToGeocode).then((res) => {
+                  const firstGeoObject = res.geoObjects.get(0);
+                  const coords = firstGeoObject.geometry.getCoordinates();
+                  const precision = firstGeoObject.properties.get('metaDataProperty.GeocoderMetaData.precision');
+                  const zoomLevel = (precision === 'street' || precision === 'exact') ? 15 : 10;
 
-      {/* --- MAIN CONTENT AREA --- */}
-      <main className="max-w-5xl mx-auto px-4 -mt-16 relative z-20 mb-20 flex-grow w-full">
-        
-        {/* Ошибка */}
-        {error && (
-          <div className="bg-red-50 border-l-4 border-red-500 p-6 rounded-r-lg shadow-md mb-8 animate-fade-in flex items-start gap-4">
-            <Info className="text-red-500 w-6 h-6 flex-shrink-0 mt-1" />
-            <div>
-              <h3 className="text-red-800 font-bold mb-1">Ошибка поиска</h3>
-              <p className="text-red-700">{error}</p>
-            </div>
-          </div>
-        )}
+                  const myMap = new window.ymaps.Map("yandex-map", {
+                    center: coords,
+                    zoom: zoomLevel,
+                    controls: ['zoomControl', 'fullscreenControl']
+                  });
 
-        {/* Результаты поиска */}
-        {result && (
-          <div className="space-y-8 animate-fade-in-up">
-            
-            {/* Карточка статуса */}
-            <div className="bg-white rounded-2xl shadow-xl border border-stone-100 overflow-hidden">
-              <div className="p-6 md:p-8 bg-white border-b border-stone-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                  <div className="text-sm text-stone-500 mb-1">Трек-номер</div>
-                  <div className="text-2xl font-bold text-emerald-900 font-mono tracking-wider">{trackingNumber.toUpperCase()}</div>
+                  const myPlacemark = new window.ymaps.Placemark(coords, {
+                    balloonContentHeader: "Адрес доставки",
+                    balloonContentBody: locationToGeocode,
+                    balloonContentFooter: "DecosThai",
+                    hintContent: "Место получения"
+                  }, {
+                    preset: 'islands#darkGreenIcon',
+                  });
+
+                  myMap.geoObjects.add(myPlacemark);
+                  mapInstanceRef.current = myMap;
+                }).catch(err => {
+                    console.error("Ошибка геокодирования:", err);
+                    new window.ymaps.Map("yandex-map", {
+                        center: [55.751574, 37.573856],
+                        zoom: 5
+                    });
+                });
+              });
+            }
+          }, [result, isMapApiLoaded]);
+
+          // 3. Поиск (Real API)
+          const performSearch = useCallback(async (track) => {
+            if (!track) return;
+            setLoading(true);
+            setError('');
+            setResult(null);
+
+            try {
+                const response = await fetch('https://proshein.com/webhook/decos-track', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ track: track.trim() }) 
+                });
+
+                if (!response.ok) throw new Error('Ошибка сервера');
+                const data = await response.json();
+
+                if (data.error) setError(data.error);
+                else setResult(data);
+            } catch (e) {
+                console.error(e);
+                setError('Не удалось загрузить данные. Проверьте интернет или номер заказа.');
+            } finally {
+                setLoading(false);
+            }
+          }, []);
+
+          const handleTrackSubmit = (e) => {
+            e.preventDefault();
+            performSearch(trackingNumber);
+          };
+
+          // 4. URL Params
+          useEffect(() => {
+            const params = new URLSearchParams(window.location.search);
+            const trackParam = params.get('track');
+            if (trackParam) {
+              setTrackingNumber(trackParam);
+              performSearch(trackParam);
+            }
+          }, [performSearch]);
+
+          return (
+            <div className="min-h-screen bg-stone-50 font-sans text-stone-800 flex flex-col">
+              
+              {/* --- HEADER --- */}
+              <header className="bg-emerald-900 text-white shadow-lg relative overflow-hidden flex-shrink-0">
+                <div className="absolute inset-0 opacity-10 pointer-events-none">
+                  <svg width="100%" height="100%">
+                    <pattern id="pattern-circles" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+                      <circle cx="20" cy="20" r="18" fill="none" stroke="currentColor" strokeWidth="1"/>
+                    </pattern>
+                    <rect x="0" y="0" width="100%" height="100%" fill="url(#pattern-circles)" />
+                  </svg>
                 </div>
 
-                {/* Имя клиента */}
-                {result.clientName && (
-                    <div className="hidden md:block text-right">
-                        <div className="text-sm text-stone-500 mb-1">Получатель</div>
-                        <div className="font-medium text-stone-800">{result.clientName}</div>
+                <div className="max-w-6xl mx-auto px-4 py-6 flex justify-between items-center relative z-10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-10 h-10 bg-amber-500 rounded-full flex items-center justify-center text-emerald-900 font-bold text-xl">D</div>
+                    <div>
+                      <h1 className="text-2xl font-serif font-bold tracking-wide text-amber-400">DecosThai</h1>
+                      <p className="text-xs text-emerald-200 uppercase tracking-widest">Premium Thai Goods</p>
                     </div>
-                )}
+                  </div>
+                  <nav className="hidden md:flex gap-6 text-sm font-medium text-emerald-100">
+                    <a href="https://decosthai.com/ru/" target="_blank" className="hover:text-amber-400 transition">Каталог</a>
+                    <a href="https://decosthai.com/ru/o-nas/" target="_blank" className="hover:text-amber-400 transition">О нас</a>
+                    <a href="https://t.me/decosthaibot" target="_blank" className="hover:text-amber-400 transition flex items-center gap-1">Помощь (Bot)</a>
+                  </nav>
+                </div>
+              </header>
 
-                <div className="flex items-center gap-3 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-100">
-                  <Truck className="text-emerald-600 w-5 h-5" />
-                  <span className="font-semibold text-emerald-800">
-                    {result.status === 'in_transit' ? 'В пути' : 
-                     result.status === 'delivered' ? 'Доставлен' : 'В обработке'}
-                  </span>
+              {/* --- HERO SECTION --- */}
+              <div className="relative bg-gradient-to-b from-emerald-900 to-emerald-800 pb-24 pt-12 px-4 rounded-b-[3rem] shadow-xl flex-shrink-0">
+                <div className="max-w-3xl mx-auto text-center relative z-10">
+                  <h2 className="text-3xl md:text-5xl font-serif text-white mb-6">Где моя посылка?</h2>
+                  <p className="text-emerald-100 mb-8 text-lg">Отслеживайте доставку ваших любимых товаров из Таиланда в реальном времени.</p>
+
+                  <form onSubmit={handleTrackSubmit} className="relative max-w-xl mx-auto">
+                    <div className="relative group">
+                      <input 
+                        type="text" 
+                        placeholder="Введите трек-номер (например, TH123456789RU)" 
+                        className="w-full pl-6 pr-36 py-5 rounded-full shadow-2xl bg-white/95 text-lg border-2 border-transparent focus:border-amber-400 focus:outline-none focus:ring-4 focus:ring-amber-400/20 transition-all placeholder:text-stone-400 text-stone-800"
+                        value={trackingNumber}
+                        onChange={(e) => setTrackingNumber(e.target.value)}
+                      />
+                      <button 
+                        type="submit"
+                        disabled={loading}
+                        className="absolute right-2 top-2 bottom-2 bg-amber-500 hover:bg-amber-400 text-emerald-900 font-bold px-8 rounded-full transition-all transform hover:scale-105 active:scale-95 disabled:opacity-70 flex items-center gap-2"
+                      >
+                        {loading ? <span className="animate-spin text-xl">⏳</span> : <><Icons.Search className="w-5 h-5" /><span>Найти</span></>}
+                      </button>
+                    </div>
+                  </form>
                 </div>
               </div>
 
-              <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
-                {/* Инфо о доставке */}
-                <div className="col-span-1 space-y-6">
-                  <div>
-                    <div className="text-sm text-stone-400 mb-1 flex items-center gap-2">
-                      <Clock className="w-4 h-4" /> Ожидаемая доставка
-                    </div>
-                    <div className="text-lg font-semibold text-stone-800">{result.estimatedDelivery}</div>
-                  </div>
-                  
-                  <div className="flex flex-col gap-4">
-                    <div className="flex gap-3">
-                      <div className="mt-1">
-                        <div className="w-3 h-3 rounded-full bg-stone-300"></div>
-                        <div className="w-0.5 h-full bg-stone-200 mx-auto my-1"></div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-stone-400">Откуда</div>
-                        <div className="font-medium">{result.origin}</div>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <div className="mt-1">
-                        <MapPin className="w-4 h-4 text-amber-500 -ml-0.5" />
-                      </div>
-                      <div>
-                        <div className="text-xs text-stone-400">Куда</div>
-                        <div className="font-medium">{result.destination}</div>
-                      </div>
+              {/* --- MAIN CONTENT AREA --- */}
+              <main className="max-w-5xl mx-auto px-4 -mt-16 relative z-20 mb-20 flex-grow w-full">
+                
+                {error && (
+                  <div className="bg-red-50 border-l-4 border-red-500 p-6 rounded-r-lg shadow-md mb-8 animate-fade-in flex items-start gap-4">
+                    <Icons.Info className="text-red-500 w-6 h-6 flex-shrink-0 mt-1" />
+                    <div>
+                      <h3 className="text-red-800 font-bold mb-1">Ошибка поиска</h3>
+                      <p className="text-red-700">{error}</p>
                     </div>
                   </div>
+                )}
 
-                  <div className="pt-4 border-t border-stone-100">
-                     <div className="text-sm text-stone-400 mb-2">Служба доставки</div>
-                     <div className="flex items-center gap-2">
-                       <Globe className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                       <span className="text-sm font-medium leading-tight">{result.carrier || 'Не указана'}</span>
-                     </div>
-                  </div>
-                </div>
+                {result && (
+                  <div className="space-y-8 animate-fade-in-up">
+                    
+                    {/* Карточка статуса */}
+                    <div className="bg-white rounded-2xl shadow-xl border border-stone-100 overflow-hidden">
+                      <div className="p-6 md:p-8 bg-white border-b border-stone-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                          <div className="text-sm text-stone-500 mb-1">Трек-номер</div>
+                          <div className="text-2xl font-bold text-emerald-900 font-mono tracking-wider">{trackingNumber.toUpperCase()}</div>
+                        </div>
 
-                {/* История (Timeline) */}
-                <div className="col-span-1 md:col-span-2">
-                  <h3 className="text-lg font-bold text-emerald-900 mb-6 font-serif">История перемещений</h3>
-                  <div className="space-y-0 relative">
-                    {/* Линия таймлайна */}
-                    <div className="absolute left-[19px] top-2 bottom-4 w-0.5 bg-stone-200"></div>
-
-                    {result.history && result.history.length > 0 ? (
-                        result.history.map((step, index) => (
-                        <div key={index} className="flex gap-4 relative pb-8 last:pb-0 group">
-                            {/* Иконка статуса */}
-                            <div className={`relative z-10 w-10 h-10 rounded-full border-4 flex items-center justify-center bg-white transition-colors
-                            ${index === 0 ? 'border-amber-400 text-amber-500 shadow-lg shadow-amber-100' : 'border-stone-200 text-stone-300'}`}>
-                            {index === 0 ? <Package className="w-5 h-5" /> : <CheckCircle className="w-5 h-5" />}
+                        {result.clientName && (
+                            <div className="hidden md:block text-right">
+                                <div className="text-sm text-stone-500 mb-1">Получатель</div>
+                                <div className="font-medium text-stone-800">{result.clientName}</div>
                             </div>
-                            
-                            <div className="flex-1 pt-1">
-                            <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-1">
-                                {/* Очищаем текст от HTML тегов */}
-                                <div className="font-semibold text-stone-800">{cleanText(step.status)}</div>
-                                <div className="text-xs font-mono text-stone-400 bg-stone-100 px-2 py-1 rounded self-start flex-shrink-0">
-                                {step.date} / {step.time}
+                        )}
+
+                        <div className="flex items-center gap-3 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-100">
+                          <Icons.Truck className="text-emerald-600 w-5 h-5" />
+                          <span className="font-semibold text-emerald-800">
+                            {result.status === 'in_transit' ? 'В пути' : 
+                             result.status === 'delivered' ? 'Доставлен' : 'В обработке'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
+                        <div className="col-span-1 space-y-6">
+                          <div>
+                            <div className="text-sm text-stone-400 mb-1 flex items-center gap-2">
+                              <Icons.Clock className="w-4 h-4" /> Ожидаемая доставка
+                            </div>
+                            <div className="text-lg font-semibold text-stone-800">{result.estimatedDelivery}</div>
+                          </div>
+                          
+                          <div className="flex flex-col gap-4">
+                            <div className="flex gap-3">
+                              <div className="mt-1">
+                                <div className="w-3 h-3 rounded-full bg-stone-300"></div>
+                                <div className="w-0.5 h-full bg-stone-200 mx-auto my-1"></div>
+                              </div>
+                              <div>
+                                <div className="text-xs text-stone-400">Откуда</div>
+                                <div className="font-medium">{result.origin}</div>
+                              </div>
+                            </div>
+                            <div className="flex gap-3">
+                              <div className="mt-1">
+                                <Icons.MapPin className="w-4 h-4 text-amber-500 -ml-0.5" />
+                              </div>
+                              <div>
+                                <div className="text-xs text-stone-400">Куда</div>
+                                <div className="font-medium">{result.destination}</div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-4 border-t border-stone-100">
+                             <div className="text-sm text-stone-400 mb-2">Служба доставки</div>
+                             <div className="flex items-center gap-2">
+                               <Icons.Globe className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                               <span className="text-sm font-medium leading-tight">{result.carrier || 'Не указана'}</span>
+                             </div>
+                          </div>
+                        </div>
+
+                        <div className="col-span-1 md:col-span-2">
+                          <h3 className="text-lg font-bold text-emerald-900 mb-6 font-serif">История перемещений</h3>
+                          <div className="space-y-0 relative">
+                            <div className="absolute left-[19px] top-2 bottom-4 w-0.5 bg-stone-200"></div>
+
+                            {result.history && result.history.length > 0 ? (
+                                result.history.map((step, index) => (
+                                <div key={index} className="flex gap-4 relative pb-8 last:pb-0 group">
+                                    <div className={`relative z-10 w-10 h-10 rounded-full border-4 flex items-center justify-center bg-white transition-colors
+                                    ${index === 0 ? 'border-amber-400 text-amber-500 shadow-lg shadow-amber-100' : 'border-stone-200 text-stone-300'}`}>
+                                    {index === 0 ? <Icons.Package className="w-5 h-5" /> : <Icons.CheckCircle className="w-5 h-5" />}
+                                    </div>
+                                    
+                                    <div className="flex-1 pt-1">
+                                    <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-1">
+                                        <div className="font-semibold text-stone-800">{cleanText(step.status)}</div>
+                                        <div className="text-xs font-mono text-stone-400 bg-stone-100 px-2 py-1 rounded self-start flex-shrink-0">
+                                        {step.date} / {step.time}
+                                        </div>
+                                    </div>
+                                    {step.location && (
+                                        <div className="text-sm text-emerald-700 mt-1 flex items-center gap-1">
+                                        <Icons.MapPin className="w-3 h-3" /> {step.location}
+                                        </div>
+                                    )}
+                                    </div>
                                 </div>
-                            </div>
-                            {step.location && (
-                                <div className="text-sm text-emerald-700 mt-1 flex items-center gap-1">
-                                <MapPin className="w-3 h-3" /> {step.location}
+                                ))
+                            ) : (
+                                <div className="pl-10 text-stone-500 italic">Нет данных об истории перемещений</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-stone-100">
+                       <div className="bg-emerald-50 p-4 border-b border-emerald-100 flex justify-between items-center">
+                         <h3 className="font-serif font-bold text-emerald-900 flex items-center gap-2">
+                           <Icons.Navigation className="w-5 h-5 text-emerald-600" />
+                           Место вручения / Адрес доставки
+                         </h3>
+                         <span className="text-xs bg-white px-2 py-1 rounded text-emerald-700 border border-emerald-100">
+                           Карта
+                         </span>
+                       </div>
+                       
+                       <div className="relative h-96 w-full bg-stone-100">
+                          <div id="yandex-map" className="w-full h-full">
+                            {!isMapApiLoaded && (
+                                <div className="flex items-center justify-center h-full text-stone-400">
+                                    Загрузка карты...
                                 </div>
                             )}
-                            </div>
-                        </div>
-                        ))
-                    ) : (
-                        <div className="pl-10 text-stone-500 italic">Нет данных об истории перемещений</div>
-                    )}
+                          </div>
+                       </div>
+                    </div>
+
+                  </div>
+                )}
+              </main>
+
+              {/* --- FOOTER --- */}
+              <footer className="bg-emerald-950 text-emerald-200/60 py-12 px-4 border-t border-emerald-900 flex-shrink-0">
+                <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-8 text-sm">
+                  <div className="space-y-4">
+                    <div className="text-xl font-serif font-bold text-amber-500">DecosThai</div>
+                    <p>Лучшая косметика и товары для здоровья из солнечного Таиланда с доставкой в Россию.</p>
+                    <div className="flex gap-4 pt-2">
+                       <a href="https://t.me/decostrade" target="_blank" className="hover:text-amber-400 transition">Telegram</a>
+                       <a href="https://vk.com/decosthai" target="_blank" className="hover:text-amber-400 transition">VKontakte</a>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-white mb-4 uppercase tracking-wider text-xs">Клиентам</h4>
+                    <ul className="space-y-2">
+                      <li><a href="https://decosthai.com/ru/instruktsii-po-rabote-s-saytom/" target="_blank" className="hover:text-amber-400 transition">Как заказать</a></li>
+                      <li><a href="https://decosthai.com/ru/oplata-zakazov/" target="_blank" className="hover:text-amber-400 transition">Оплата</a></li>
+                      <li><a href="https://decosthai.com/ru/dostavka-posylok-iz-tailanda/" target="_blank" className="hover:text-amber-400 transition">Доставка</a></li>
+                    </ul>
+                  </div>
+                  <div className="md:col-span-2">
+                    <h4 className="font-bold text-white mb-4 uppercase tracking-wider text-xs">Контакты</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                      <ul className="space-y-2">
+                        <li className="flex items-center gap-2"><Icons.Phone className="w-4 h-4 text-amber-500" /><span className="text-white">8-800-511-8418</span> (RU)</li>
+                        <li className="flex items-center gap-2"><Icons.Phone className="w-4 h-4 text-amber-500" /><span>+66 2 157 1837</span> (Eng/Thai)</li>
+                        <li className="flex items-center gap-2"><Icons.Mail className="w-4 h-4 text-amber-500" /><a href="mailto:INFO@DECOSTHAI.COM" className="hover:text-amber-400">INFO@DECOSTHAI.COM</a></li>
+                      </ul>
+                      <div className="text-xs leading-relaxed opacity-70">
+                        <p className="font-semibold text-white mb-1">Decos company limited</p>
+                        <p>Reg.N 0125557024483</p>
+                        <p>223/31 51/60-61 ,Moo 6, Sao Thong Hin,</p>
+                        <p>Bang Yai District, Nonthaburi, THAILAND 11140</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Блок карты */}
-            <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-stone-100">
-               <div className="bg-emerald-50 p-4 border-b border-emerald-100 flex justify-between items-center">
-                 <h3 className="font-serif font-bold text-emerald-900 flex items-center gap-2">
-                   <Navigation className="w-5 h-5 text-emerald-600" />
-                   Место вручения / Адрес доставки
-                 </h3>
-                 <span className="text-xs bg-white px-2 py-1 rounded text-emerald-700 border border-emerald-100">
-                   Карта
-                 </span>
-               </div>
-               
-               <div className="relative h-96 w-full bg-stone-100">
-                  <div id="yandex-map" className="w-full h-full">
-                    {!isMapApiLoaded && (
-                        <div className="flex items-center justify-center h-full text-stone-400">
-                            Загрузка карты...
-                        </div>
-                    )}
+                <div className="max-w-6xl mx-auto mt-12 pt-8 border-t border-emerald-900 flex flex-col md:flex-row justify-between items-center gap-4 text-xs">
+                  <div>&copy; 2025 DecosThai. Все права защищены.</div>
+                  <div className="flex items-center gap-4">
+                    <span className="uppercase tracking-wider opacity-50">Мы принимаем:</span>
+                    <div className="flex gap-2">
+                      <div className="px-3 py-1 bg-white/10 rounded border border-white/10 text-white font-bold tracking-wide">МИР</div>
+                      <div className="px-3 py-1 bg-white/10 rounded border border-white/10 text-white font-bold tracking-wide">VISA</div>
+                      <div className="px-3 py-1 bg-white/10 rounded border border-white/10 text-white font-bold tracking-wide flex items-center gap-1"><div className="w-2 h-2 rounded-sm bg-gradient-to-tr from-indigo-500 to-purple-500"></div> СБП</div>
+                    </div>
                   </div>
-               </div>
+                </div>
+              </footer>
             </div>
+          );
+        }
 
-          </div>
-        )}
-      </main>
-
-      {/* --- FOOTER --- */}
-      <footer className="bg-emerald-950 text-emerald-200/60 py-12 px-4 border-t border-emerald-900 flex-shrink-0">
-        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-8 text-sm">
-          <div className="space-y-4">
-            <div className="text-xl font-serif font-bold text-amber-500">DecosThai</div>
-            <p>Лучшая косметика и товары для здоровья из солнечного Таиланда с доставкой в Россию.</p>
-            <div className="flex gap-4 pt-2">
-               <a href="https://t.me/decostrade" target="_blank" rel="noopener noreferrer" className="hover:text-amber-400 transition">
-                  Telegram
-               </a>
-               <a href="https://vk.com/decosthai" target="_blank" rel="noopener noreferrer" className="hover:text-amber-400 transition">
-                  VKontakte
-               </a>
-            </div>
-          </div>
-          <div>
-            <h4 className="font-bold text-white mb-4 uppercase tracking-wider text-xs">Клиентам</h4>
-            <ul className="space-y-2">
-              <li><a href="https://decosthai.com/ru/instruktsii-po-rabote-s-saytom/" target="_blank" rel="noopener noreferrer" className="hover:text-amber-400 transition">Как заказать</a></li>
-              <li><a href="https://decosthai.com/ru/oplata-zakazov/" target="_blank" rel="noopener noreferrer" className="hover:text-amber-400 transition">Оплата</a></li>
-              <li><a href="https://decosthai.com/ru/dostavka-posylok-iz-tailanda/" target="_blank" rel="noopener noreferrer" className="hover:text-amber-400 transition">Доставка</a></li>
-            </ul>
-          </div>
-          <div className="md:col-span-2">
-            <h4 className="font-bold text-white mb-4 uppercase tracking-wider text-xs">Контакты</h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-              <ul className="space-y-2">
-                <li className="flex items-center gap-2"><Phone className="w-4 h-4 text-amber-500" /><span className="text-white">8-800-511-8418</span> (RU)</li>
-                <li className="flex items-center gap-2"><Phone className="w-4 h-4 text-amber-500" /><span>+66 2 157 1837</span> (Eng/Thai)</li>
-                <li className="flex items-center gap-2"><Mail className="w-4 h-4 text-amber-500" /><a href="mailto:INFO@DECOSTHAI.COM" className="hover:text-amber-400">INFO@DECOSTHAI.COM</a></li>
-              </ul>
-              <div className="text-xs leading-relaxed opacity-70">
-                <p className="font-semibold text-white mb-1">Decos company limited</p>
-                <p>Reg.N 0125557024483</p>
-                <p>223/31 51/60-61 ,Moo 6, Sao Thong Hin,</p>
-                <p>Bang Yai District, Nonthaburi, THAILAND 11140</p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="max-w-6xl mx-auto mt-12 pt-8 border-t border-emerald-900 flex flex-col md:flex-row justify-between items-center gap-4 text-xs">
-          <div>&copy; 2025 DecosThai. Все права защищены.</div>
-          <div className="flex items-center gap-4">
-            <span className="uppercase tracking-wider opacity-50">Мы принимаем:</span>
-            <div className="flex gap-2">
-              <div className="px-3 py-1 bg-white/10 rounded border border-white/10 text-white font-bold tracking-wide">МИР</div>
-              <div className="px-3 py-1 bg-white/10 rounded border border-white/10 text-white font-bold tracking-wide">VISA</div>
-              <div className="px-3 py-1 bg-white/10 rounded border border-white/10 text-white font-bold tracking-wide flex items-center gap-1"><div className="w-2 h-2 rounded-sm bg-gradient-to-tr from-indigo-500 to-purple-500"></div> СБП</div>
-            </div>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
-}
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
